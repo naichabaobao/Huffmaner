@@ -9,6 +9,15 @@
 #include <string>
 #include <fstream>
 
+#define ShowInfo
+//#undef ShowInfo
+
+void showProgress(double progress) {
+	std::cout.width(3);
+	std::cout << static_cast<int>(progress * 100.0) << "%";
+	std::cout << "\b\b\b\b";
+}
+
 std::string bitsetToString(std::vector<bool> set) {
 	std::string result;
 	for (auto it = set.begin(); it != set.end(); it++) {
@@ -49,7 +58,7 @@ public:
 		}
 
 			
-		int resultSize = 0;
+		unsigned int resultSize = 0;
 		decodeData(buf, size, resultData, resultSize);
 
 		std::ofstream out;
@@ -61,14 +70,18 @@ public:
 		free(resultData);
 		free(buf);
 	}
-	int decodeData(char* source, int sourceSize, char*& resultData, int& resultDataSize) {
-		if (sourceSize <= 0) {
+#define SizeByte 2
+	int decodeData(char* source, int sourceSize, char*& resultData, unsigned int& resultDataSize) {
+#ifdef ShowInfo
+		printf("decode:");
+#endif // ShowInfo
+		if (sourceSize < SizeByte) {
 			throw "not found table";
 		}
-		auto tableSize = static_cast<unsigned>(source[0]);
-
+		auto tableSize = static_cast<unsigned>(source[0]) << 8;
+		tableSize += static_cast<unsigned>(source[1]);
 		auto calcSize = tableSize * sizeof(char) + tableSize * sizeof(int);
-		auto headerSize = 1 + calcSize;
+		auto headerSize = SizeByte + calcSize;
 
 		if (sourceSize < headerSize) {
 			throw "not found keys";
@@ -76,29 +89,28 @@ public:
 		if (!map.empty()) {
 			map.clear();
 		}
-		int maxChar = 0;
+		unsigned int  maxChar = 0;
 		for (size_t index = 0; index < tableSize; index++) {
-			int offset = 1 + index * (sizeof(char) + sizeof(int));
+			int offset = SizeByte + index * (sizeof(char) + sizeof(int));
 			char ch = source[offset];
-			int count = 0;
-			count |= static_cast<int>(source[offset + 1]) << 24;
-			count |= static_cast<int>(source[offset + 2]) << 16;
-			count |= static_cast<int>(source[offset + 3]) << 8;
-			count |= static_cast<int>(source[offset + 4]);
+			unsigned int count = 0;
+			count += static_cast<unsigned int>(static_cast<unsigned char>(source[offset + 1])) << 24;
+			count += static_cast<unsigned int>(static_cast<unsigned char>(source[offset + 2])) << 16;
+			count += static_cast<unsigned int>(static_cast<unsigned char>(source[offset + 3])) << 8;
+			count += static_cast<unsigned int>(static_cast<unsigned char>(source[offset + 4]));
 			map[ch] = count;
 			maxChar += count;
 		}
 
-		if (root != nullptr) {
-			delete root;
-		}
-		this->root = buildTree();
+		buildTree();
 
 		HuffmanNode* node = this->root;
 		auto buffDataSize = sourceSize - headerSize;
-		int currentCharCount = 0;
-		resultDataSize = maxChar * sizeof(char);
-		resultData = (char*)malloc(resultDataSize);
+		unsigned int currentCharCount = 0;
+		unsigned int calcResultSize = maxChar;
+
+		resultDataSize = calcResultSize;
+		resultData = (char*)malloc(resultDataSize * sizeof(char));
 		// each huff data
 		for (size_t index = 0; index < buffDataSize; index++) {
 			char ch = source[headerSize + index];
@@ -118,6 +130,10 @@ public:
 					resultData[currentCharCount] = node->data;
 					currentCharCount++;
 					node = this->root;
+#ifdef ShowInfo
+					showProgress(static_cast<double>(currentCharCount) / static_cast<double>(maxChar));
+#endif // ShowInfo
+
 				}
 			}
 		}
@@ -128,6 +144,7 @@ public:
 
 		return resultDataSize;
 	}
+#undef SizeByte
 	void encodeFile(std::string filepath, std::string outfilepath) {
 		std::ifstream in;
 		in.open(filepath, std::ios::in | std::ios::binary);
@@ -156,7 +173,6 @@ public:
 	}
 	// contain header data
 	int encodeData(char* source, int sourceSize, char*& resultData, int& resultDataSize) {
-
 		char* compressData;
 		int compressSize = 0;
 		encode(source, sourceSize, compressData, compressSize);
@@ -166,7 +182,7 @@ public:
 
 		resultData = (char*)malloc((compressSize + headerSize) * sizeof(char));
 		resultDataSize = compressSize + headerSize;
-		
+
 		auto position = 0;
 		for (size_t index = 0; index < headerSize; index++) {
 			resultData[position] = headerData[index];
@@ -184,10 +200,9 @@ public:
 	}
 	int encode(char* source, int sourceSize, char*& resultData, int& resultDataSize) {
 		statistics(source, sourceSize);
-		if (root != nullptr) {
-			delete root;
-		}
-		this->root = buildTree();
+
+
+		buildTree();
 
 		buildMapping();
 
@@ -195,12 +210,13 @@ public:
 
 		return resultDataSize;
 	};
-	int decode(char* source, int sourceSize, char*& resultData, int& resultDataSize) {
-
-	};
 	Huffmaner() {
 	}
-	
+	~Huffmaner() {
+		if (root != nullptr) {
+			delete root;
+		}
+	}
 private:
 
 	class HuffmanNode;
@@ -213,8 +229,12 @@ private:
 		HuffmanNode() {
 		}
 		~HuffmanNode() {
-			//this->_left->~Node();
-			//this->_right->~Node();
+			if (this->left!=nullptr) {
+				delete this->left;
+			}
+			if (this->right != nullptr) {
+				delete this->right;
+			}
 		}
 		HuffmanNode(char ch, int weight) {
 			this->data = ch;
@@ -327,7 +347,7 @@ private:
 			}
 		}
 	}
-	HuffmanNode* buildTree() {
+	void buildTree() {
 		// max first
 		auto compare = [](HuffmanNode* node1, HuffmanNode* node2) {
 			
@@ -341,6 +361,7 @@ private:
 			auto node = new HuffmanNode(key, value);
 			que.push(node);
 		}
+
 		auto count = 0;
 		while (que.size() > 1) {
 			auto leftNode = que.top();
@@ -351,10 +372,18 @@ private:
 			que.push(parent);
 			count++;
 		}
+
 		auto node = que.top();
-		return node;
+		que.pop();
+		if (this->root != nullptr) {
+			delete root;
+		}
+		this->root = node;
 	}
 	void encoding(char* source, int sourceSize, char*& resultData, int& resultDataSize) {
+#ifdef ShowInfo
+		printf("encode:");
+#endif // ShowInfo
 		// calc bit size
 		auto bitSize = 0;
 		for (size_t position = 0; position < sourceSize; position++) {
@@ -391,6 +420,9 @@ private:
 				resultData[writePosition] = handle();
 				writePosition++;
 			}
+#ifdef ShowInfo
+			showProgress(static_cast<double>(position) / static_cast<double>(sourceSize));
+#endif // ShowInfo
 		}
 		// flush
 		if (!bitset.empty()) {
@@ -398,23 +430,26 @@ private:
 		}
 	}
 	void createHeader(char* &resultData, int &resultSize) {
-		resultSize = 1 * sizeof(char) + map.size() * sizeof(char) + map.size() * sizeof(int);
+		resultSize = 2 * sizeof(unsigned char) + map.size() * sizeof(unsigned char) + map.size() * sizeof(int);
 		resultData = (char*)malloc(resultSize);
 		auto position = 0;
-		resultData[position] = static_cast<char>(map.size());
+		
+		resultData[position] = static_cast<unsigned char>((map.size() & 0xff00) >> 8);
+		position++;
+		resultData[position] = static_cast<unsigned char>((map.size() & 0xff));
 		position++;
 		for (auto it = map.begin(); it != map.end(); it++) {
 			auto key = (*it).first;
 			auto value = (*it).second;
 			resultData[position] = key;
 			position++;
-			resultData[position] = static_cast<char>(value >> 24);
+			resultData[position] = static_cast<unsigned char>(value >> 24);
 			position++;
-			resultData[position] = static_cast<char>((value & 0x00ff0000) >> 16);
+			resultData[position] = static_cast<unsigned char>((value & 0x00ff0000) >> 16);
 			position++;
-			resultData[position] = static_cast<char>((value & 0x0000ff00) >> 8);
+			resultData[position] = static_cast<unsigned char>((value & 0x0000ff00) >> 8);
 			position++;
-			resultData[position] = static_cast<char>(value & 0x000000ff);
+			resultData[position] = static_cast<unsigned char>(value & 0x000000ff);
 			position++;
 		}
 	}
